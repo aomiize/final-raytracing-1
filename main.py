@@ -6,206 +6,382 @@ import RT_scene as rts
 import RT_object as rto
 import RT_integrator as rti
 import RT_light as rtl
+import math
+import numpy as np
+from PIL import Image as im
 
+# Denoiser
+try:
+    import cv2
+    HAS_CV2 = True
+except:
+    HAS_CV2 = False
+    try:
+        print("WARNING: opencv-python not found")
+        print("Denoising will be disabled")
+        print("Install: pip install opencv-python")
+        print()
+    except:
+        pass
 
-def renderDreamyMarbles():
+def denoise_bilateral(img_array, strength=1.0):
+    """Bilateral filter - ลด noise โดยเก็บขอบคม"""
+    if not HAS_CV2:
+        return img_array
+    
+    d = int(9 * strength)
+    sigma_color = 75 * strength
+    sigma_space = 75 * strength
+    
+    return cv2.bilateralFilter(img_array, d, sigma_color, sigma_space)
 
+# ========================================
+# ⚙️ SETTINGS - แก้ตรงนี้ได้
+# ========================================
+IMG_WIDTH = 960          # 320, 640, 960, 1280, 1920
+SAMPLES = 64             # 16, 64, 256, 512, 1024
+MAX_DEPTH = 12           # 8, 12, 16
+
+DENOISE_STRENGTH = 1.0   # 0.5 (อ่อน), 1.0 (กลาง), 1.5 (แรง)
+
+# ========================================
+# CHESS PIECE BUILDERS
+# ========================================
+
+def build_pawn_standing(world, material, pos):
+    """Pawn ตั้งตรง"""
+    x, z = pos.x(), pos.z()
+    y = pos.y()
+    
+    # Bottom
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.02, z),
+        fRadius=0.15,
+        fHeight=0.04,
+        mMat=material
+    ))
+    y += 0.04
+    
+    # Base (cone with spheres)
+    for i in range(15):
+        t = i / 14
+        yy = y + t * 0.15
+        r = 0.14 - t * 0.06
+        world.add_object(rto.Sphere(rtu.Vec3(x, yy, z), r, material))
+    y += 0.15
+    
+    # Body
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.15, z),
+        fRadius=0.08,
+        fHeight=0.30,
+        mMat=material
+    ))
+    y += 0.30
+    
+    # Collar
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.015, z),
+        fRadius=0.12,
+        fHeight=0.03,
+        mMat=material
+    ))
+    y += 0.03
+    
+    # Head
+    head_y = y + 0.09
+    for i in range(30):
+        t = i / 29
+        angle = t * math.pi
+        yy = head_y - 0.10 * math.cos(angle)
+        r = 0.10 * math.sin(angle)
+        if r > 0.002:
+            world.add_object(rto.Sphere(rtu.Vec3(x, yy, z), r, material))
+
+def build_rook_standing(world, material, pos):
+    """Rook ตั้งตรง - แบบ cylinder top"""
+    x, z = pos.x(), pos.z()
+    y = pos.y()
+    
+    # Bottom
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.02, z),
+        fRadius=0.15,
+        fHeight=0.04,
+        mMat=material
+    ))
+    y += 0.04
+    
+    # Base
+    for i in range(8):
+        t = i / 7
+        yy = y + t * 0.08
+        r = 0.15 - t * 0.01
+        world.add_object(rto.Sphere(rtu.Vec3(x, yy, z), r, material))
+    y += 0.08
+    
+    # Lower body
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.08, z),
+        fRadius=0.14,
+        fHeight=0.16,
+        mMat=material
+    ))
+    y += 0.16
+    
+    # Lower ring
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.015, z),
+        fRadius=0.15,
+        fHeight=0.03,
+        mMat=material
+    ))
+    y += 0.03
+    
+    # Middle body
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.08, z),
+        fRadius=0.13,
+        fHeight=0.16,
+        mMat=material
+    ))
+    y += 0.16
+    
+    # Upper ring
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.015, z),
+        fRadius=0.14,
+        fHeight=0.03,
+        mMat=material
+    ))
+    y += 0.03
+    
+    # Upper body
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.075, z),
+        fRadius=0.13,
+        fHeight=0.15,
+        mMat=material
+    ))
+    y += 0.15
+    
+    # Top Ring
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(x, y + 0.05, z),
+        fRadius=0.13,
+        fHeight=0.10,
+        mMat=material
+    ))
+    y += 0.10
+    
+    # 4 Top Cylinders
+    top_cyl_height = 0.03
+    top_cyl_radius = 0.035
+    offset = 0.095
+    
+    top_positions = [
+        (x + offset, z),
+        (x - offset, z),
+        (x, z + offset),
+        (x, z - offset),
+    ]
+    
+    for tx, tz in top_positions:
+        world.add_object(rto.Cylinder(
+            vCenter=rtu.Vec3(tx, y + top_cyl_height/2, tz),
+            fRadius=top_cyl_radius,
+            fHeight=top_cyl_height,
+            mMat=material
+        ))
+
+# ========================================
+# MAIN FUNCTION
+# ========================================
+
+def main():
+    """Main rendering function"""
+    
+    # ========================================
+    # CAMERA
+    # ========================================
+    print("\n" + "="*70)
+    print("  Creating Camera...")
+    print("="*70)
+    
     main_camera = rtc.Camera()
-
-    # ---------- render quality ----------
-    main_camera.aspect_ratio = 16.0/9.0
-    main_camera.img_width = 1920
-    main_camera.samples_per_pixel = 1024
-    main_camera.max_depth = 12  
-
+    
+    main_camera.aspect_ratio = 16.0 / 9.0
+    main_camera.img_width = IMG_WIDTH
+    main_camera.samples_per_pixel = SAMPLES
+    main_camera.max_depth = MAX_DEPTH
+    
+    # Camera - dramatic close-up
     main_camera.vertical_fov = 40
-
-    # Camera position - ใกล้กว่าเดิมเพื่อ bokeh ชัด
-    main_camera.look_from = rtu.Vec3(0, 2.5, 8)
-    main_camera.look_at = rtu.Vec3(0, 0.8, 0)
+    main_camera.look_from = rtu.Vec3(0, 0.4, 2.2)
+    main_camera.look_at = rtu.Vec3(0, 0.45, 0)
     main_camera.vec_up = rtu.Vec3(0, 1, 0)
-
-    # Depth of Field แรง สำหรับ dreamy bokeh
-    aperture = 0.25  # เพิ่ม aperture = bokeh นุ่มมาก
-    focus_distance = 8.0
-
-    main_camera.init_camera(aperture, focus_distance)
-
-    world = rts.Scene(cBgcolor=rtu.Color(0.02, 0.02, 0.03))  # พื้นหลังมืดนิดหน่อย
-
-    # ---------- Ground - Soft reflective surface ----------
-    ground_mat = rtm.Metal(
-        rtu.Color(0.9, 0.9, 0.95),
-        fRoughness=0.4  # นุ่มๆ ไม่ต้องแวววับมาก
-    )
-
-    world.add_object(
-        rto.Sphere(
-            rtu.Vec3(0, -1000, 0),
-            1000,
-            ground_mat
-        )
-    )
-
-    # ---------- Glass Marbles - Colorful & Transparent ----------
-    # Material = Dielectric (glass) with different colors
-
-    # ลูกแก้วสีฟ้า (น้ำเงินพาสเทล)
-    blue_glass = rtm.Dielectric(
-        rtu.Color(0.7, 0.85, 1.0),
-        fIor=1.5
-    )
-
-    # ลูกแก้วสีชมพู
-    pink_glass = rtm.Dielectric(
-        rtu.Color(1.0, 0.75, 0.85),
-        fIor=1.5
-    )
-
-    # ลูกแก้วสีเขียว
-    green_glass = rtm.Dielectric(
-        rtu.Color(0.7, 1.0, 0.8),
-        fIor=1.5
-    )
-
-    # ลูกแก้วสีเหลือง
-    yellow_glass = rtm.Dielectric(
-        rtu.Color(1.0, 0.95, 0.6),
-        fIor=1.5
-    )
-
-    # ลูกแก้วสีม่วง
-    purple_glass = rtm.Dielectric(
-        rtu.Color(0.9, 0.7, 1.0),
-        fIor=1.5
-    )
-
-    # ลูกแก้วสีส้ม
-    orange_glass = rtm.Dielectric(
-        rtu.Color(1.0, 0.8, 0.6),
-        fIor=1.5
-    )
-
-    # ลูกแก้วใส (clear glass)
-    clear_glass = rtm.Dielectric(
-        rtu.Color(0.98, 0.98, 0.98),
-        fIor=1.5
-    )
-
-    # ---------- Arrange marbles in clusters ----------
     
-    # Hero marble (focus point) - ตรงกลางด้านหน้า
-    world.add_object(
-        rto.Sphere(rtu.Vec3(0, 0.8, 0), 0.8, blue_glass)
-    )
-
-    # Foreground marbles (out of focus - bokeh)
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-1.5, 0.5, 2.5), 0.5, pink_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(1.8, 0.4, 2.0), 0.4, yellow_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-0.5, 0.3, 3.0), 0.3, green_glass)
-    )
-
-    # Mid-ground marbles (near focus)
-    world.add_object(
-        rto.Sphere(rtu.Vec3(1.2, 0.6, -0.5), 0.6, purple_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-1.5, 0.5, 0.2), 0.5, orange_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(0.8, 0.35, 1.0), 0.35, clear_glass)
-    )
-
-    # Background marbles (out of focus)
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-2.5, 0.7, -2.5), 0.7, green_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(2.0, 0.5, -2.0), 0.5, pink_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(0.5, 0.4, -3.0), 0.4, blue_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-1.0, 0.3, -2.5), 0.3, yellow_glass)
-    )
-
-    # Small scattered marbles
-    world.add_object(
-        rto.Sphere(rtu.Vec3(2.5, 0.25, 0.5), 0.25, purple_glass)
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-2.8, 0.3, -1.0), 0.3, orange_glass)
-    )
-
-    # ---------- Rainbow Soft Lighting (Glow + Bloom effect) ----------
+    main_camera.init_camera(0.04, 2.2)
     
-    # Main soft pink glow (top-left)
-    pink_glow = rtl.Diffuse_light(
-        rtu.Color(15, 8, 12)  # Soft pink-purple glow
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-3, 4, 2), 1.2, pink_glow)
-    )
-
-    # Blue-cyan accent light (top-right)
-    cyan_glow = rtl.Diffuse_light(
-        rtu.Color(6, 10, 15)  # Cool blue glow
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(4, 3.5, -1), 1.0, cyan_glow)
-    )
-
-    # Warm amber/orange fill light (low, behind)
-    amber_glow = rtl.Diffuse_light(
-        rtu.Color(12, 8, 4)  # Warm orange glow
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(0, 1.5, -5), 1.5, amber_glow)
-    )
-
-    # Soft yellow-green accent (side)
-    green_glow = rtl.Diffuse_light(
-        rtu.Color(8, 12, 6)  # Soft green-yellow
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(-4, 2, -3), 0.8, green_glow)
-    )
-
-    # Subtle purple highlight (creates dreamy atmosphere)
-    purple_glow = rtl.Diffuse_light(
-        rtu.Color(10, 6, 14)  # Dreamy purple
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(3, 2.5, 1), 0.9, purple_glow)
-    )
-
-    # Top fill light (soft white-yellow)
-    top_fill = rtl.Diffuse_light(
-        rtu.Color(8, 8, 7)  # Neutral soft fill
-    )
-    world.add_object(
-        rto.Sphere(rtu.Vec3(0, 6, 0), 2.0, top_fill)
-    )
-
-    # ---------- integrator ----------
+    print(f"  Resolution: {main_camera.img_width}x{main_camera.img_height}")
+    print(f"  Samples: {SAMPLES} SPP")
+    print(f"  Max Depth: {MAX_DEPTH}")
+    
+    # ========================================
+    # SCENE
+    # ========================================
+    print("\n" + "="*70)
+    print("  Creating Scene...")
+    print("="*70)
+    
+    world = rts.Scene(cBgcolor=rtu.Color(0.02, 0.02, 0.03))
+    
+    # Materials
+    white_mat = rtm.Lambertian(rtu.Color(0.95, 0.93, 0.91))
+    black_mat = rtm.Lambertian(rtu.Color(0.12, 0.10, 0.08))
+    table_mat = rtm.Lambertian(rtu.Color(0.15, 0.12, 0.10))
+    floor = rtm.Lambertian(rtu.Color(0.05, 0.04, 0.03))
+    wall_mat = rtm.Lambertian(rtu.Color(0.08, 0.07, 0.06))
+    
+    # Floor
+    world.add_object(rto.Sphere(rtu.Vec3(0, -1000, 0), 1000, floor))
+    
+    # Walls
+    world.add_object(rto.Quad(
+        rtu.Vec3(-5, 0, -3),
+        rtu.Vec3(10, 0, 0),
+        rtu.Vec3(0, 5, 0),
+        wall_mat
+    ))
+    
+    world.add_object(rto.Quad(
+        rtu.Vec3(-3, 0, -3),
+        rtu.Vec3(0, 0, 6),
+        rtu.Vec3(0, 5, 0),
+        wall_mat
+    ))
+    
+    world.add_object(rto.Quad(
+        rtu.Vec3(3, 0, -3),
+        rtu.Vec3(0, 0, 6),
+        rtu.Vec3(0, 5, 0),
+        wall_mat
+    ))
+    
+    # Table
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(0, 0.15, 0),
+        fRadius=0.80,
+        fHeight=0.30,
+        mMat=table_mat
+    ))
+    
+    print("  Building chess pieces...")
+    
+    # Chess pieces
+    build_pawn_standing(world, white_mat, rtu.Vec3(-0.5, 0.30, 0))
+    build_rook_standing(world, black_mat, rtu.Vec3(0.5, 0.30, 0))
+    
+    print("  Adding person silhouette...")
+    
+    # Person silhouette
+    person_mat = rtm.Lambertian(rtu.Color(0.08, 0.07, 0.06))
+    
+    world.add_object(rto.Cylinder(
+        vCenter=rtu.Vec3(2.5, 0.6, -1.5),
+        fRadius=0.25,
+        fHeight=1.2,
+        mMat=person_mat
+    ))
+    
+    world.add_object(rto.Sphere(
+        rtu.Vec3(2.5, 1.4, -1.5),
+        0.2,
+        person_mat
+    ))
+    
+    # ========================================
+    # LIGHTING
+    # ========================================
+    print("  Setting up lighting...")
+    
+    # Single dim light (outside frame)
+    dim_light = rtl.Diffuse_light(rtu.Color(3.5, 3.2, 3.0))
+    world.add_object(rto.Sphere(rtu.Vec3(3.5, 2.0, -1.0), 2.0, dim_light))
+    
+    print(f"  Scene created (Chess pieces + Person + Lighting)")
+    
+    # ========================================
+    # RENDER
+    # ========================================
+    print("\n" + "="*70)
+    print("  RENDERING")
+    print("="*70)
+    print(f"  Resolution: {main_camera.img_width}x{main_camera.img_height}")
+    print(f"  Samples: {SAMPLES} SPP")
+    print(f"  Estimated time: ~5-8 minutes")
+    print("="*70 + "\n")
+    
     integrator = rti.Integrator(bDlight=True, bSkyBG=False)
-
-    renderer = rtren.Renderer(
-        main_camera,
-        integrator,
-        world
-    )
-
+    renderer = rtren.Renderer(main_camera, integrator, world)
+    
+    # Render
+    print("Rendering...\n")
     renderer.render_jittered()
+    
+    # Save RAW
+    raw_output = "chess_raw.png"
+    renderer.write_img2png(raw_output)
+    print(f"\nSaved RAW: {raw_output}")
+    
+    # ========================================
+    # DENOISE
+    # ========================================
+    if HAS_CV2:
+        print("\n" + "="*70)
+        print("  DENOISING...")
+        print("="*70)
+        print(f"  Method: Bilateral Filter")
+        print(f"  Strength: {DENOISE_STRENGTH}")
+        
+        # Load image
+        img = im.open(raw_output)
+        img_array = np.array(img)
+        
+        # Denoise
+        denoised = denoise_bilateral(img_array, DENOISE_STRENGTH)
+        
+        # Save
+        final_output = "chess_final.png"
+        final_img = im.fromarray(denoised.astype(np.uint8))
+        final_img.save(final_output)
+        
+        print(f"  Saved FINAL: {final_output}")
+        print("="*70)
+        
+        print("\n" + "="*70)
+        print("  COMPLETE!")
+        print("="*70)
+        print(f"  RAW:   {raw_output} (with noise)")
+        print(f"  FINAL: {final_output} (clean)")
+        print("="*70 + "\n")
+        
+    else:
+        print("\nDenoising skipped (opencv not installed)")
+        print(f"Output: {raw_output}\n")
 
-    renderer.write_img2png("dreamy_glass_marbles.png")
-
+# ========================================
+# RUN
+# ========================================
 
 if __name__ == "__main__":
-    renderDreamyMarbles()
+    print("\n")
+    print("="*70)
+    print("  CHESS SCENE RENDERER")
+    print("="*70)
+    print(f"  Resolution: {IMG_WIDTH}x{int(IMG_WIDTH/16*9)}")
+    print(f"  Samples: {SAMPLES} SPP")
+    print(f"  Denoise: {'Enabled' if HAS_CV2 else 'Disabled'}")
+    print("="*70)
+    
+    main()

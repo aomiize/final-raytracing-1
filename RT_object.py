@@ -184,4 +184,134 @@ class Triangle(Object):
 def bounding_sphere(self):
     return self.center, self.radius
 
-    
+class Cylinder(Object):
+    def __init__(self, vCenter, fRadius, fHeight=None, mMat=None):
+        super().__init__()
+        self.center = vCenter
+        self.radius = fRadius
+        self.material = mMat
+
+        if fHeight is not None:
+            self.y_min = vCenter.y() - fHeight / 2
+            self.y_max = vCenter.y() + fHeight / 2
+            self.finite = True
+        else:
+            self.finite = False
+
+    def add_material(self, mMat):
+        self.material = mMat
+
+    def intersect(self, rRay, cInterval):
+        ro = rRay.getOrigin()
+        rd = rRay.getDirection()
+        oc = ro - self.center
+
+        a = rd.x()*rd.x() + rd.z()*rd.z()
+        b = 2.0 * (oc.x()*rd.x() + oc.z()*rd.z())
+        c = oc.x()*oc.x() + oc.z()*oc.z() - self.radius*self.radius
+
+        discriminant = b*b - 4*a*c
+
+        if discriminant < 0:
+            return None
+
+        sqrt_disc = math.sqrt(discriminant)
+        t1 = (-b - sqrt_disc) / (2*a)
+        t2 = (-b + sqrt_disc) / (2*a)
+
+        t = None
+        if cInterval.contains(t1):
+            hit_y = ro.y() + t1 * rd.y()
+            if not self.finite or (self.y_min <= hit_y <= self.y_max):
+                t = t1
+
+        if t is None and cInterval.contains(t2):
+            hit_y = ro.y() + t2 * rd.y()
+            if not self.finite or (self.y_min <= hit_y <= self.y_max):
+                t = t2
+
+        if t is None:
+            return None
+
+        hit_point = rRay.at(t)
+        normal_x = hit_point.x() - self.center.x()
+        normal_z = hit_point.z() - self.center.z()
+        hit_normal = rtu.Vec3(normal_x, 0, normal_z) / self.radius
+
+        hinfo = rtu.Hitinfo(hit_point, hit_normal, t, self.material)
+        hinfo.set_face_normal(rRay, hit_normal)
+
+        theta = math.atan2(normal_z, normal_x)
+        u = (theta + math.pi) / (2 * math.pi)
+
+        if self.finite:
+            v = (hit_point.y() - self.y_min) / (self.y_max - self.y_min)
+        else:
+            v = hit_point.y() * 0.1
+
+        hinfo.set_uv(u, v)
+        return hinfo
+
+class Cone(Object):
+    def __init__(self, vCenter, fRadius, fHeight, mMat=None):
+        super().__init__()
+        self.center = vCenter
+        self.base_radius = fRadius
+        self.height = fHeight
+        self.material = mMat
+        self.apex = vCenter + rtu.Vec3(0, fHeight, 0)
+
+    def add_material(self, mMat):
+        self.material = mMat
+
+    def intersect(self, rRay, cInterval):
+        ro = rRay.getOrigin()
+        rd = rRay.getDirection()
+        oc = ro - self.center
+
+        k = self.base_radius / self.height
+        k2 = k * k
+
+        a = rd.x()*rd.x() + rd.z()*rd.z() - k2*rd.y()*rd.y()
+        b = 2*(oc.x()*rd.x() + oc.z()*rd.z() - k2*oc.y()*rd.y())
+        c = oc.x()*oc.x() + oc.z()*oc.z() - k2*oc.y()*oc.y()
+
+        discriminant = b*b - 4*a*c
+
+        if discriminant < 0:
+            return None
+
+        sqrt_disc = math.sqrt(discriminant)
+        t1 = (-b - sqrt_disc) / (2*a)
+        t2 = (-b + sqrt_disc) / (2*a)
+
+        t = None
+        for t_test in [t1, t2]:
+            if cInterval.contains(t_test):
+                hit_y = ro.y() + t_test * rd.y()
+                if self.center.y() <= hit_y <= self.apex.y():
+                    t = t_test
+                    break
+
+        if t is None:
+            return None
+
+        hit_point = rRay.at(t)
+        y_from_base = hit_point.y() - self.center.y()
+        r_at_y = y_from_base * k
+
+        normal_x = hit_point.x() - self.center.x()
+        normal_z = hit_point.z() - self.center.z()
+        normal_y = -r_at_y * k
+
+        hit_normal = rtu.Vec3.unit_vector(rtu.Vec3(normal_x, normal_y, normal_z))
+
+        hinfo = rtu.Hitinfo(hit_point, hit_normal, t, self.material)
+        hinfo.set_face_normal(rRay, hit_normal)
+
+        theta = math.atan2(normal_z, normal_x)
+        u = (theta + math.pi) / (2 * math.pi)
+        v = y_from_base / self.height
+        hinfo.set_uv(u, v)
+
+        return hinfo
