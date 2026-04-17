@@ -1,14 +1,3 @@
-"""
-Image Denoiser - ลด Noise หลัง Render
-======================================
-ใช้ Gaussian Blur + Bilateral Filter เพื่อลด noise
-โดยไม่ทำให้ภาพเบลอมาก
-
-วิธีใช้:
-from denoiser import denoise_image
-denoise_image('input.png', 'output_denoised.png', strength=1.0)
-"""
-
 import numpy as np
 from PIL import Image as im
 from scipy.ndimage import gaussian_filter, median_filter
